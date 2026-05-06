@@ -1,127 +1,86 @@
--- USERS PROFILE TABLE
-CREATE TABLE profiles (
-  id UUID PRIMARY KEY,
-  firebase_uid TEXT UNIQUE NOT NULL,
-  full_name TEXT,
-  email TEXT UNIQUE NOT NULL,
-  avatar_url TEXT,
-  date_of_birth DATE,
-  gender TEXT,
-  blood_group TEXT,
-  height_cm NUMERIC,
-  weight_kg NUMERIC,
-  country TEXT,
-  language TEXT DEFAULT 'en',
-  emergency_contact TEXT,
-  medical_conditions TEXT[],
-  allergies TEXT[],
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+-- New tables for MediCare expanded features
+-- Run this in your Supabase SQL Editor
+
+-- Vital Signs
+CREATE TABLE IF NOT EXISTS vital_signs (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id text NOT NULL,
+  blood_pressure_systolic numeric,
+  blood_pressure_diastolic numeric,
+  heart_rate numeric,
+  blood_glucose numeric,
+  temperature numeric,
+  spo2 numeric,
+  weight numeric,
+  created_at timestamptz DEFAULT now()
 );
+ALTER TABLE vital_signs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage own vitals" ON vital_signs
+  USING (auth.uid()::text = user_id) WITH CHECK (auth.uid()::text = user_id);
 
--- MEDICINES TABLE
-CREATE TABLE medicines (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  dosage TEXT,
-  frequency TEXT, -- morning/afternoon/night/custom
-  start_date DATE,
-  end_date DATE,
-  notes TEXT,
-  is_active BOOLEAN DEFAULT true,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+-- Nutrition Logs
+CREATE TABLE IF NOT EXISTS nutrition_logs (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id text NOT NULL,
+  meal_type text NOT NULL,
+  food_name text NOT NULL,
+  calories numeric DEFAULT 0,
+  protein numeric DEFAULT 0,
+  carbs numeric DEFAULT 0,
+  fat numeric DEFAULT 0,
+  created_at timestamptz DEFAULT now()
 );
+ALTER TABLE nutrition_logs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage own nutrition" ON nutrition_logs
+  USING (auth.uid()::text = user_id) WITH CHECK (auth.uid()::text = user_id);
 
--- MEDICINE LOGS TABLE
-CREATE TABLE medicine_logs (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  medicine_id UUID REFERENCES medicines(id) ON DELETE CASCADE,
-  user_id UUID REFERENCES profiles(id),
-  taken_at TIMESTAMPTZ DEFAULT NOW(),
-  status TEXT -- taken/skipped/missed
+-- Fitness Logs
+CREATE TABLE IF NOT EXISTS fitness_logs (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id text NOT NULL,
+  exercise_type text NOT NULL,
+  duration_minutes numeric DEFAULT 0,
+  calories_burned numeric DEFAULT 0,
+  notes text,
+  created_at timestamptz DEFAULT now()
 );
+ALTER TABLE fitness_logs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage own fitness" ON fitness_logs
+  USING (auth.uid()::text = user_id) WITH CHECK (auth.uid()::text = user_id);
 
--- APPOINTMENTS TABLE
-CREATE TABLE appointments (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
-  doctor_name TEXT,
-  specialization TEXT,
-  hospital TEXT,
-  appointment_date TIMESTAMPTZ,
-  notes TEXT,
-  status TEXT DEFAULT 'upcoming', -- upcoming/completed/cancelled
-  reminder_sent BOOLEAN DEFAULT false,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+-- Wellness Logs
+CREATE TABLE IF NOT EXISTS wellness_logs (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id text NOT NULL,
+  stress_level integer CHECK (stress_level BETWEEN 1 AND 10),
+  sleep_hours numeric,
+  sleep_quality text,
+  mood text,
+  gratitude_note text,
+  created_at timestamptz DEFAULT now()
 );
+ALTER TABLE wellness_logs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage own wellness" ON wellness_logs
+  USING (auth.uid()::text = user_id) WITH CHECK (auth.uid()::text = user_id);
 
--- MEDICAL REPORTS TABLE
-CREATE TABLE medical_reports (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
-  title TEXT,
-  report_type TEXT, -- blood_test/xray/mri/other
-  file_url TEXT,
-  ai_summary TEXT,
-  uploaded_at TIMESTAMPTZ DEFAULT NOW()
+-- Profiles (update existing or create)
+CREATE TABLE IF NOT EXISTS profiles (
+  id text PRIMARY KEY,
+  email text,
+  full_name text,
+  date_of_birth date,
+  gender text,
+  blood_type text,
+  height_cm numeric,
+  weight_kg numeric,
+  allergies text,
+  medical_conditions text,
+  emergency_contact_name text,
+  emergency_contact_phone text,
+  avatar_url text,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
 );
-
--- SYMPTOM CHECKS TABLE
-CREATE TABLE symptom_checks (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
-  symptoms TEXT[],
-  ai_response JSONB,
-  severity TEXT,
-  checked_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- MOOD TRACKING TABLE
-CREATE TABLE mood_logs (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
-  mood_score INTEGER CHECK (mood_score BETWEEN 1 AND 5),
-  mood_label TEXT,
-  notes TEXT,
-  logged_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- HEALTH METRICS TABLE
-CREATE TABLE health_metrics (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
-  metric_type TEXT, -- bmi/blood_pressure/glucose/steps/water
-  value NUMERIC,
-  unit TEXT,
-  recorded_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- CHAT HISTORY TABLE
-CREATE TABLE chat_history (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
-  role TEXT, -- user/assistant
-  message TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- ROW LEVEL SECURITY (RLS) POLICIES
-
--- Enable RLS on all tables
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE medicines ENABLE ROW LEVEL SECURITY;
-ALTER TABLE medicine_logs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE medical_reports ENABLE ROW LEVEL SECURITY;
-ALTER TABLE symptom_checks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE mood_logs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE health_metrics ENABLE ROW LEVEL SECURITY;
-ALTER TABLE chat_history ENABLE ROW LEVEL SECURITY;
-
--- Note: In a real-world scenario with Supabase + Firebase Auth, 
--- you'd either mint a custom JWT from Firebase to pass to Supabase,
--- or use the Supabase Service Role key in your Next.js API routes (Serverless) 
--- to bypass RLS, validating the Firebase token in the API route first.
--- Since this architecture relies on Next.js API Routes for backend logic,
--- we'll assume API routes use the Service Role key after verifying Firebase Auth.
+CREATE POLICY "Users manage own profile" ON profiles
+  USING (auth.uid()::text = id) WITH CHECK (auth.uid()::text = id);

@@ -1,56 +1,50 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { NextResponse } from "next/server";
-export const dynamic = 'force-dynamic';
+import { NextResponse } from 'next/server';
+import { MEDICAL_SYSTEM_PROMPT } from '@/lib/groq';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: Request) {
   try {
-    const { symptoms, duration, additionalNotes } = await req.json();
-    
-    if (!symptoms || symptoms.length === 0) {
-      return NextResponse.json({ error: "No symptoms provided" }, { status: 400 });
+    const { symptoms, duration, severity, age, gender } = await req.json();
+
+    const userMsg = `Patient Profile: Age ${age || 'unknown'}, Gender: ${gender || 'not specified'}
+Symptoms: ${symptoms.join(', ')}
+Duration: ${duration}
+Severity: ${severity}
+
+Please provide a comprehensive analysis.`;
+
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'llama3-70b-8192',
+        messages: [
+          { role: 'system', content: MEDICAL_SYSTEM_PROMPT },
+          { role: 'user', content: userMsg },
+        ],
+        max_tokens: 1500,
+        temperature: 0.5,
+        stream: true,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      return NextResponse.json({ error: `Groq error: ${err}` }, { status: 500 });
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
-    const prompt = `
-    Analyze the following medical symptoms and provide a JSON response.
-    Symptoms: ${symptoms.join(", ")}
-    Duration: ${duration}
-    Notes: ${additionalNotes}
-
-    The response MUST be a valid JSON object with the following structure:
-    {
-      "severity": "Mild" | "Moderate" | "Severe",
-      "conditions": [
-        { "name": "Condition Name", "probability": "High" | "Medium" | "Low" }
-      ],
-      "specialist": "Type of doctor (e.g. Cardiologist)",
-      "remedies": ["Suggestion 1", "Suggestion 2"],
-      "warning": "Urgent warning if applicable, otherwise null"
-    }
-
-    Rules:
-    - If symptoms include chest pain or severe breathing issues, set severity to "Severe" and include a strong warning to seek emergency care.
-    - Always maintain a clinical yet cautious tone.
-    - Include a disclaimer that this is not a diagnosis.
-    `;
-
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-    
-    // Clean JSON extraction
-    const jsonMatch = text.match(/\{.*\}/s);
-    const data = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(text);
-
-    return NextResponse.json(data);
-  } catch (error: any) {
-    console.error("Symptom Analysis API Error:", error);
-    return NextResponse.json(
-      { error: "Failed to analyze symptoms" },
-      { status: 500 }
-    );
+    return new Response(response.body, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    });
+  } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 }

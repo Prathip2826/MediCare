@@ -1,376 +1,265 @@
-"use client";
+'use client';
 
-import { useState, useEffect } from "react";
-import Link from "next/link";
-import { 
-  Activity, Droplets, Flame, Calendar as CalendarIcon, 
-  ChevronRight, Brain, Info, Plus, Pill, Loader2
-} from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
-import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { format } from "date-fns";
-import { toast } from "sonner";
+import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import {
+  Heart, Activity, Brain, Droplets, Apple, Target, TrendingUp,
+  Zap, Calendar, ChevronRight, CheckCircle
+} from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+import { auth } from '@/lib/firebase';
+import Link from 'next/link';
 
-const quickActions = [
-  { name: "Check Symptoms", href: "/symptoms", icon: Activity, color: "text-blue-500", bg: "bg-blue-500/10" },
-  { name: "Log Medicine", href: "/medicines", icon: Plus, color: "text-emerald-500", bg: "bg-emerald-500/10" },
-  { name: "Book Doctor", href: "/appointments", icon: CalendarIcon, color: "text-orange-500", bg: "bg-orange-500/10" },
-  { name: "Ask AI", href: "/chatbot", icon: Brain, color: "text-cyan-500", bg: "bg-cyan-500/10" },
+const QUICK_ACTIONS = [
+  { href: '/symptoms',  label: 'Check Symptoms',  icon: Activity,  color: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600' },
+  { href: '/medicines', label: 'Medicines',        icon: Heart,     color: 'bg-purple-50 dark:bg-purple-900/20 text-purple-600' },
+  { href: '/vitals',    label: 'Log Vitals',       icon: TrendingUp,color: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600' },
+  { href: '/nutrition', label: 'Nutrition',        icon: Apple,     color: 'bg-orange-50 dark:bg-orange-900/20 text-orange-600' },
+  { href: '/fitness',   label: 'Fitness',          icon: Target,    color: 'bg-pink-50 dark:bg-pink-900/20 text-pink-600' },
+  { href: '/chatbot',   label: 'AI Chatbot',       icon: Brain,     color: 'bg-cyan-50 dark:bg-cyan-900/20 text-cyan-600' },
+  { href: '/wellness',  label: 'Wellness',         icon: Droplets,  color: 'bg-teal-50 dark:bg-teal-900/20 text-teal-600' },
+  { href: '/emergency', label: 'Emergency',        icon: Zap,       color: 'bg-red-50 dark:bg-red-900/20 text-red-600' },
 ];
+
+function SkeletonCard() {
+  return <div className="bg-card border border-border rounded-2xl p-5 h-36 animate-shimmer" />;
+}
+
+function HealthScoreRing({ score }: { score: number }) {
+  const r = 40, circ = 2 * Math.PI * r;
+  const offset = circ - (score / 100) * circ;
+  return (
+    <div className="flex items-center justify-center">
+      <svg width="100" height="100" className="-rotate-90">
+        <circle cx="50" cy="50" r={r} fill="none" stroke="hsl(var(--muted))" strokeWidth="8" />
+        <motion.circle cx="50" cy="50" r={r} fill="none" stroke="url(#scoreGrad)" strokeWidth="8"
+          strokeLinecap="round" strokeDasharray={circ}
+          initial={{ strokeDashoffset: circ }} animate={{ strokeDashoffset: offset }}
+          transition={{ duration: 1.5, ease: 'easeOut' }} />
+        <defs>
+          <linearGradient id="scoreGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#0EA5E9" />
+            <stop offset="100%" stopColor="#10B981" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <div className="absolute flex flex-col items-center">
+        <span className="text-2xl font-extrabold gradient-text">{score}</span>
+        <span className="text-[10px] text-muted-foreground">/ 100</span>
+      </div>
+    </div>
+  );
+}
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
-  const [profile, setProfile] = useState<any>(null);
-  const [medicines, setMedicines] = useState<any[]>([]);
-  const [appointments, setAppointments] = useState<any[]>([]);
-  const [moodLogs, setMoodLogs] = useState<any[]>([]);
+  const [healthTip, setHealthTip] = useState('Stay hydrated! Drinking 8 glasses of water daily supports kidney function and maintains blood pressure.');
+  const [medicines, setMedicines] = useState<{ name: string; dosage: string; taken?: boolean }[]>([]);
   const [waterGlasses, setWaterGlasses] = useState(0);
-  const waterGoal = 8;
+  const [mood, setMood] = useState('');
+  const userName = auth?.currentUser?.displayName || 'there';
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
   useEffect(() => {
-    fetchDashboardData();
+    const load = async () => {
+      if (supabase && auth?.currentUser) {
+        const uid = auth.currentUser.uid;
+        const today = new Date().toISOString().split('T')[0];
+        const { data } = await supabase.from('medicines').select('name,dosage').eq('user_id', uid).limit(3);
+        if (data) setMedicines(data);
+      }
+      setLoading(false);
+    };
+    load();
   }, []);
 
-  const fetchDashboardData = async () => {
-    try {
-      setLoading(true);
-      const [profileRes, medsRes, apptsRes, moodRes, waterRes] = await Promise.all([
-        fetch('/api/profile'),
-        fetch('/api/medicines'),
-        fetch('/api/appointments'),
-        fetch('/api/mental-health'),
-        fetch('/api/health-metrics?type=water')
-      ]);
+  const toggleWater = (n: number) => setWaterGlasses(n);
 
-      if (profileRes.ok) setProfile(await profileRes.json());
-      
-      const [meds, logs, appts, mood] = await Promise.all([
-        medsRes.json(),
-        fetch('/api/medicines/log?today=true').then(r => r.json()),
-        apptsRes.json(),
-        moodRes.json()
-      ]);
-
-      if (medsRes.ok) {
-        const loggedIds = new Set(logs.map((l: any) => l.medicine_id));
-        setMedicines(meds.map((m: any) => ({ ...m, taken: loggedIds.has(m.id) })));
-      }
-      
-      if (apptsRes.ok) setAppointments(appts);
-      if (moodRes.ok) setMoodLogs(mood);
-      
-      if (waterRes.ok) {
-        const waterData = await waterRes.json();
-        const today = format(new Date(), 'yyyy-MM-dd');
-        const todayWater = waterData.filter((w: any) => format(new Date(w.recorded_at), 'yyyy-MM-dd') === today);
-        const total = todayWater.reduce((acc: number, curr: any) => acc + Number(curr.value), 0);
-        setWaterGlasses(total);
-      }
-    } catch (error) {
-      console.error("Dashboard data fetch error:", error);
-    } finally {
-      setLoading(false);
-    }
+  const containerVariants = {
+    hidden: {}, visible: { transition: { staggerChildren: 0.08 } }
   };
-
-  const handleAddWater = async (count: number) => {
-    try {
-      const res = await fetch('/api/health-metrics', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ metric_type: 'water', value: 1, unit: 'glass' }),
-      });
-      if (res.ok) {
-        setWaterGlasses(prev => prev + 1);
-        toast.success("Stay hydrated! 💧");
-      }
-    } catch (error) {
-      toast.error("Failed to log water");
-    }
+  const itemVariants = {
+    hidden: { opacity: 0, y: 20 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.4 } }
   };
-
-  const handleQuickTake = async (id: string) => {
-    try {
-      const res = await fetch('/api/medicines/log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ medicine_id: id, status: 'taken' }),
-      });
-      if (res.ok) {
-        setMedicines(prev => prev.map(m => m.id === id ? { ...m, taken: true } : m));
-        toast.success("Dose recorded! ✨");
-      }
-    } catch (error) {
-      toast.error("Failed to record dose");
-    }
-  };
-
-  const calculateBMI = () => {
-    if (!profile?.height_cm || !profile?.weight_kg) return null;
-    const heightInM = profile.height_cm / 100;
-    return (profile.weight_kg / (heightInM * heightInM)).toFixed(1);
-  };
-
-  const getBMICategory = (bmi: number) => {
-    if (bmi < 18.5) return { label: "Underweight", color: "text-orange-500", bg: "bg-orange-50 border-orange-200" };
-    if (bmi < 25) return { label: "Normal", color: "text-emerald-500", bg: "bg-emerald-50 border-emerald-200" };
-    if (bmi < 30) return { label: "Overweight", color: "text-orange-500", bg: "bg-orange-50 border-orange-200" };
-    return { label: "Obese", color: "text-red-500", bg: "bg-red-50 border-red-200" };
-  };
-
-  const moodChartData = moodLogs
-    .slice(0, 7)
-    .reverse()
-    .map(log => ({
-      day: format(new Date(log.logged_at), 'EEE'),
-      score: log.mood_score
-    }));
-
-  const bmi = calculateBMI();
-  const bmiVal = bmi ? parseFloat(bmi) : null;
-  const bmiCat = bmiVal ? getBMICategory(bmiVal) : null;
-
-  if (loading) {
-    return (
-      <div className="h-[80vh] flex flex-col items-center justify-center gap-4">
-        <Loader2 className="h-10 w-10 animate-spin text-primary" />
-        <p className="text-muted-foreground animate-pulse">Assembling your health dashboard...</p>
-      </div>
-    );
-  }
-
-  const firstName = profile?.full_name?.split(" ")[0] || "User";
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-10">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight uppercase">Good {format(new Date(), 'a') === 'AM' ? 'Morning' : 'Day'}, {firstName}!</h1>
-          <p className="text-muted-foreground mt-1">Here is your health summary for today, {format(new Date(), 'MMMM do, yyyy')}</p>
+    <div className="max-w-7xl mx-auto">
+      {/* Header */}
+      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
+        <h1 className="text-2xl font-extrabold text-foreground">{greeting}, {userName}! 👋</h1>
+        <p className="text-muted-foreground text-sm mt-0.5">Here's your health overview for today</p>
+      </motion.div>
+
+      {loading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {[...Array(8)].map((_, i) => <SkeletonCard key={i} />)}
         </div>
-      </div>
+      ) : (
+        <motion.div variants={containerVariants} initial="hidden" animate="visible" className="space-y-6">
+          {/* Top widgets row */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Health Score */}
+            <motion.div variants={itemVariants} className="bg-card border border-border rounded-2xl p-5 card-hover col-span-1">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-foreground">Health Score</h3>
+                <span className="text-xs text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-full font-medium">Excellent</span>
+              </div>
+              <div className="relative flex justify-center">
+                <HealthScoreRing score={87} />
+              </div>
+            </motion.div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="border-primary/10 shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Daily Completion</CardTitle>
-            <Activity className="h-4 w-4 text-primary" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{medicines.length > 0 ? "InProgress" : "0/0"}</div>
-            <Progress value={40} className="mt-2 h-2" />
-            <p className="text-xs text-muted-foreground mt-2">Finish your daily routine</p>
-          </CardContent>
-        </Card>
+            {/* Water Intake */}
+            <motion.div variants={itemVariants} className="bg-card border border-border rounded-2xl p-5 card-hover">
+              <div className="flex items-center gap-2 mb-3">
+                <Droplets size={16} className="text-cyan-500" />
+                <h3 className="text-sm font-semibold text-foreground">Water Intake</h3>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5 mb-3">
+                {[...Array(8)].map((_, i) => (
+                  <motion.button key={i} onClick={() => toggleWater(i + 1)}
+                    whileTap={{ scale: 0.85 }}
+                    className={`aspect-square rounded-lg flex items-center justify-center text-base transition-all
+                      ${i < waterGlasses ? 'bg-cyan-500/20 border-2 border-cyan-500' : 'bg-muted border-2 border-border'}`}>
+                    💧
+                  </motion.button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">{waterGlasses}/8 glasses today</p>
+              <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
+                <motion.div className="h-full bg-cyan-500 rounded-full"
+                  initial={{ width: 0 }} animate={{ width: `${(waterGlasses / 8) * 100}%` }}
+                  transition={{ duration: 0.4 }} />
+              </div>
+            </motion.div>
 
-        <Card className="border-emerald-500/10 shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Check-ins</CardTitle>
-            <Flame className="h-4 w-4 text-emerald-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{moodLogs.length} Total</div>
-            <p className="text-xs text-muted-foreground mt-2">Consistent tracking leads to health.</p>
-          </CardContent>
-        </Card>
+            {/* Mood Tracker */}
+            <motion.div variants={itemVariants} className="bg-card border border-border rounded-2xl p-5 card-hover">
+              <div className="flex items-center gap-2 mb-3">
+                <Brain size={16} className="text-purple-500" />
+                <h3 className="text-sm font-semibold text-foreground">Mood Today</h3>
+              </div>
+              <div className="flex justify-between">
+                {['😢', '😔', '😐', '😊', '😄'].map((e, i) => (
+                  <motion.button key={i} onClick={() => setMood(e)}
+                    whileHover={{ scale: 1.2 }} whileTap={{ scale: 0.9 }}
+                    className={`text-2xl p-1.5 rounded-xl transition-all ${mood === e ? 'bg-primary/20 ring-2 ring-primary' : 'hover:bg-muted'}`}>
+                    {e}
+                  </motion.button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground mt-3">{mood ? `You're feeling ${['terrible','sad','okay','happy','great'][['😢','😔','😐','😊','😄'].indexOf(mood)]} today` : 'How are you feeling today?'}</p>
+            </motion.div>
 
-        <Card className="border-cyan-500/10 shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Water Intake</CardTitle>
-            <Droplets className="h-4 w-4 text-cyan-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{waterGlasses} / {waterGoal}</div>
-            <div className="flex items-center gap-1 mt-2">
-              {Array.from({ length: waterGoal }).map((_, i) => (
-                <div 
-                  key={i} 
-                  className={`h-6 flex-1 rounded-sm ${i < waterGlasses ? 'bg-cyan-500' : 'bg-secondary'}`}
-                  onClick={() => i === waterGlasses && handleAddWater(1)}
-                  style={{ cursor: i === waterGlasses ? 'pointer' : 'default' }}
-                />
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-primary/10 to-secondary/10 border-none shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">AI Health Tip</CardTitle>
-            <Brain className="h-4 w-4 text-primary" />
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm font-medium leading-snug">
-              {waterGlasses < 4 
-                ? "You're a bit behind on water. Try to drink two glasses in the next hour!"
-                : "Great job staying hydrated. This helps maintain energy levels throughout the day."}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-8">
-          <div>
-            <h2 className="text-lg font-semibold mb-4">Quick Actions</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {quickActions.map((action) => (
-                <Link key={action.name} href={action.href}>
-                  <Card className="hover:bg-muted/50 transition-colors border shadow-sm cursor-pointer h-full">
-                    <CardContent className="p-4 flex flex-col items-center justify-center text-center gap-3">
-                      <div className={`p-3 rounded-full ${action.bg}`}>
-                        <action.icon className={`h-6 w-6 ${action.color}`} />
-                      </div>
-                      <span className="text-sm font-medium">{action.name}</span>
-                    </CardContent>
-                  </Card>
-                </Link>
-              ))}
-            </div>
+            {/* Quick BMI */}
+            <motion.div variants={itemVariants} className="bg-card border border-border rounded-2xl p-5 card-hover">
+              <div className="flex items-center gap-2 mb-3">
+                <Activity size={16} className="text-emerald-500" />
+                <h3 className="text-sm font-semibold text-foreground">BMI</h3>
+              </div>
+              <div className="text-3xl font-extrabold gradient-text mb-1">22.4</div>
+              <div className="text-xs text-emerald-500 font-medium mb-3">Normal weight ✓</div>
+              <div className="relative h-2.5 bg-gradient-to-r from-blue-400 via-emerald-400 to-red-400 rounded-full">
+                <motion.div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-emerald-500 rounded-full shadow"
+                  initial={{ left: '0%' }} animate={{ left: '44%' }} transition={{ duration: 1, delay: 0.5 }} />
+              </div>
+              <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+                <span>Under</span><span>Normal</span><span>Over</span>
+              </div>
+            </motion.div>
           </div>
 
-          <Card className="shadow-sm">
-            <CardHeader>
-              <CardTitle>Mood History</CardTitle>
-              <CardDescription>Your mental wellbeing over the last 7 entries</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[250px] w-full">
-                {moodChartData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={moodChartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--muted))" />
-                      <XAxis 
-                        dataKey="day" 
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-                      />
-                      <YAxis 
-                        domain={[1, 5]} 
-                        ticks={[1, 2, 3, 4, 5]}
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
-                      />
-                      <Tooltip 
-                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                      />
-                      <Line 
-                        type="monotone" 
-                        dataKey="score" 
-                        stroke="hsl(var(--primary))" 
-                        strokeWidth={3}
-                        dot={{ r: 4, strokeWidth: 2, fill: 'hsl(var(--background))' }}
-                        activeDot={{ r: 6, strokeWidth: 0, fill: 'hsl(var(--primary))' }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="h-full flex items-center justify-center text-muted-foreground italic">
-                    Log your mood in the Mental Health section to see trends.
-                  </div>
-                )}
+          {/* Middle row */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* Today's Medicines */}
+            <motion.div variants={itemVariants} className="bg-card border border-border rounded-2xl p-5 card-hover">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-foreground">Today's Medicines</h3>
+                <Link href="/medicines" className="text-xs text-primary hover:underline flex items-center gap-1">
+                  View all <ChevronRight size={12} />
+                </Link>
               </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="space-y-8">
-          <Card className="shadow-sm">
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle>Today's Medicines</CardTitle>
-              <Button variant="ghost" size="sm" render={<Link href="/medicines" className="text-xs text-primary" />}>
-                View All
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-4 pt-4">
               {medicines.length === 0 ? (
-                <p className="text-sm text-muted-foreground italic text-center py-4">No medicines scheduled.</p>
-              ) : medicines.slice(0, 3).map((med, i) => (
-                <div key={med.id} className={`flex items-center justify-between ${i !== medicines.slice(0, 3).length - 1 ? 'border-b pb-4' : ''}`}>
-                  <div className="flex items-center gap-3">
-                    <div className="bg-primary/10 p-2 rounded-full">
-                      <Pill className="h-4 w-4 text-primary" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium">{med.name}</p>
-                      <p className="text-xs text-muted-foreground uppercase">{med.frequency}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {med.taken ? (
-                      <div className="bg-emerald-100 text-emerald-600 p-1.5 rounded-full">
-                        <Activity className="h-4 w-4" />
+                <div className="text-center py-4">
+                  <p className="text-sm text-muted-foreground">No medicines logged yet</p>
+                  <Link href="/medicines" className="text-xs text-primary hover:underline mt-1 inline-block">Add medicine →</Link>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {medicines.map((m, i) => (
+                    <div key={i} className="flex items-center gap-3 p-2.5 rounded-xl bg-muted/50 hover:bg-muted transition-colors">
+                      <motion.button whileTap={{ scale: 0.9 }}
+                        className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all
+                          ${m.taken ? 'bg-emerald-500 border-emerald-500' : 'border-border hover:border-emerald-500'}`}>
+                        {m.taken && <CheckCircle size={14} className="text-white" />}
+                      </motion.button>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">{m.name}</p>
+                        <p className="text-xs text-muted-foreground">{m.dosage}</p>
                       </div>
-                    ) : (
-                      <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => handleQuickTake(med.id)}>
-                        Take
-                      </Button>
-                    )}
-                    <Button size="sm" variant="ghost" className="h-8 w-8 p-0" render={<Link href="/medicines" />}>
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-sm">
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle>Appointments</CardTitle>
-              <Button variant="ghost" size="sm" render={<Link href="/appointments" className="text-xs text-primary" />}>
-                View All
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-4 pt-4">
-              {appointments.filter(a => a.status === 'upcoming').length === 0 ? (
-                <p className="text-sm text-muted-foreground italic text-center py-4">No upcoming appointments.</p>
-              ) : appointments.filter(a => a.status === 'upcoming').slice(0, 2).map((appt) => (
-                <div key={appt.id} className="flex items-start gap-4">
-                  <div className="bg-muted rounded-lg p-2 text-center min-w-14">
-                    <p className="text-[10px] font-medium text-muted-foreground uppercase">{format(new Date(appt.appointment_date), 'MMM')}</p>
-                    <p className="text-xl font-bold text-primary">{format(new Date(appt.appointment_date), 'd')}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">{appt.doctor_name}</p>
-                    <p className="text-xs text-muted-foreground">{appt.specialization}</p>
-                    <p className="text-xs font-medium mt-1">{format(new Date(appt.appointment_date), 'p')}</p>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-sm">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Your BMI</p>
-                  <div className="text-3xl font-bold mt-1">{bmi || "—"}</div>
-                  {bmiCat && (
-                    <div className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold mt-2 ${bmiCat.bg} ${bmiCat.color}`}>
-                      {bmiCat.label}
                     </div>
-                  )}
-                  {!bmi && (
-                    <Link href="/profile" className="text-xs text-primary hover:underline mt-2 block">
-                      Update height/weight in profile
-                    </Link>
-                  )}
+                  ))}
                 </div>
-                <div className={`h-16 w-16 rounded-full border-4 ${bmiCat ? 'border-emerald-500' : 'border-muted'} flex items-center justify-center`}>
-                  <Activity className={`h-6 w-6 ${bmiCat ? 'text-emerald-500' : 'text-muted-foreground'}`} />
+              )}
+            </motion.div>
+
+            {/* AI Tip */}
+            <motion.div variants={itemVariants} className="bg-card border border-border rounded-2xl p-5 card-hover lg:col-span-2">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-7 h-7 rounded-xl gradient-hero flex items-center justify-center">
+                  <Brain size={14} className="text-white" />
                 </div>
+                <h3 className="font-semibold text-foreground">AI Daily Health Tip</h3>
+                <span className="ml-auto text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">Powered by Groq</span>
               </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+              <p className="text-sm text-muted-foreground leading-relaxed">{healthTip}</p>
+              <div className="mt-4 flex gap-2">
+                <Link href="/chatbot"
+                  className="text-xs text-primary hover:underline flex items-center gap-1 font-medium">
+                  Ask AI more <ChevronRight size={12} />
+                </Link>
+              </div>
+            </motion.div>
+          </div>
+
+          {/* Quick Actions */}
+          <motion.div variants={itemVariants} className="bg-card border border-border rounded-2xl p-5">
+            <h3 className="font-semibold text-foreground mb-4">Quick Actions</h3>
+            <div className="grid grid-cols-4 md:grid-cols-8 gap-3">
+              {QUICK_ACTIONS.map((a, i) => {
+                const Icon = a.icon;
+                return (
+                  <Link key={i} href={a.href}>
+                    <motion.div whileHover={{ y: -3 }} whileTap={{ scale: 0.95 }}
+                      className="flex flex-col items-center gap-2 cursor-pointer group">
+                      <div className={`w-12 h-12 rounded-2xl ${a.color} flex items-center justify-center transition-transform group-hover:scale-110`}>
+                        <Icon size={20} />
+                      </div>
+                      <span className="text-[10px] text-muted-foreground text-center leading-tight">{a.label}</span>
+                    </motion.div>
+                  </Link>
+                );
+              })}
+            </div>
+          </motion.div>
+
+          {/* Upcoming placeholder */}
+          <motion.div variants={itemVariants} className="bg-card border border-border rounded-2xl p-5 card-hover">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Calendar size={16} className="text-primary" />
+                <h3 className="font-semibold text-foreground">Upcoming</h3>
+              </div>
+            </div>
+            <div className="text-center py-6 text-muted-foreground">
+              <Calendar size={32} className="mx-auto mb-2 opacity-30" />
+              <p className="text-sm">No upcoming events. Use the modules above to log your health data!</p>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
     </div>
   );
 }

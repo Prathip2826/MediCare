@@ -1,226 +1,224 @@
-"use client";
+'use client';
 
-import { useState, useRef, useEffect } from "react";
-import { 
-  Send, 
-  Bot, 
-  User, 
-  Loader2, 
-  Plus, 
-  MessageSquare, 
-  Sparkles,
-  AlertCircle,
-  Stethoscope,
-  Pill,
-  FileText
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn } from "@/lib/utils";
+import { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Send, Plus, Copy, Bot, User, Trash2, Sparkles } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import toast from 'react-hot-toast';
+
+export const dynamic = 'force-dynamic';
 
 interface Message {
   id: string;
-  role: "user" | "assistant";
+  role: 'user' | 'assistant';
   content: string;
-  timestamp: Date;
+  time: string;
 }
 
-const SUGGESTED_PROMPTS = [
-  { text: "Check my symptoms", icon: Stethoscope },
-  { text: "Explain my medical report", icon: FileText },
-  { text: "Remind me about medicines", icon: Pill },
-  { text: "How to reduce stress?", icon: Sparkles },
+const SUGGESTED = [
+  'What are symptoms of diabetes?',
+  'How to improve sleep quality?',
+  'Best foods for heart health?',
+  'How to manage stress?',
+  'What is hypertension?',
+  'Signs of vitamin D deficiency?',
 ];
 
 export default function ChatbotPage() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      role: "assistant",
-      content: "Hello! I'm your MediCare AI assistant. How can I help you today? Please remember, I'm an AI and not a substitute for professional medical advice.",
-      timestamp: new Date(),
-    }
-  ]);
-  const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput]       = useState('');
+  const [loading, setLoading]   = useState(false);
+  const [streaming, setStreaming] = useState('');
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef  = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTo({
-        top: scrollRef.current.scrollHeight,
-        behavior: "smooth",
-      });
-    }
-  }, [messages]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, streaming]);
 
-  const handleSend = async (text: string = input) => {
-    if (!text.trim()) return;
+  const sendMessage = async (text?: string) => {
+    const content = (text || input).trim();
+    if (!content || loading) return;
 
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: text,
-      timestamp: new Date(),
-    };
+    const userMsg: Message = { id: Date.now().toString(), role: 'user', content, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+    setMessages(prev => [...prev, userMsg]);
+    setInput('');
+    setLoading(true);
+    setStreaming('');
 
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-    setIsLoading(true);
-
-    // Real AI Response
     try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          messages: [...messages, userMessage].map(m => ({ role: m.role, content: m.content })) 
-        }),
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: [...messages, userMsg].map(m => ({ role: m.role, content: m.content })) }),
       });
 
-      if (!response.ok) throw new Error("Failed to fetch response");
-      
-      const data = await response.json();
-      
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: data.content,
-        timestamp: new Date(),
+      if (!res.body) throw new Error('No response body');
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let full = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
+        for (const line of lines) {
+          const data = line.replace('data: ', '').trim();
+          if (data === '[DONE]') break;
+          try {
+            const json = JSON.parse(data);
+            const delta = json.choices?.[0]?.delta?.content || '';
+            full += delta;
+            setStreaming(full);
+          } catch {}
+        }
+      }
+
+      const aiMsg: Message = {
+        id: (Date.now() + 1).toString(), role: 'assistant', content: full,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
-      setMessages((prev) => [...prev, assistantMessage]);
-    } catch (error) {
-      console.error("Chat Error:", error);
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: "I'm sorry, I'm having trouble connecting to the medical intelligence server. Please check your internet connection or try again later.",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      setMessages(prev => [...prev, aiMsg]);
+      setStreaming('');
+    } catch (e) {
+      toast.error('Failed to get response. Please try again.');
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
+  const handleKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  };
+
+  const copyMsg = (text: string) => { navigator.clipboard.writeText(text); toast.success('Copied!'); };
+
   return (
-    <div className="flex flex-col h-[calc(100vh-140px)] max-w-5xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700">
-      <div className="flex-1 flex flex-col min-h-0 bg-card rounded-2xl border shadow-xl overflow-hidden">
-        {/* Chat Header */}
-        <div className="p-4 border-b bg-muted/30 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-primary flex items-center justify-center text-primary-foreground shadow-lg shadow-primary/20">
-              <Bot className="h-6 w-6" />
-            </div>
-            <div>
-              <h2 className="font-bold">MediCare Assistant</h2>
-              <div className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-                <span className="text-xs text-muted-foreground">Always available</span>
-              </div>
+    <div className="flex flex-col h-[calc(100vh-8rem)] max-w-4xl mx-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4 flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl gradient-hero flex items-center justify-center">
+            <Bot size={20} className="text-white" />
+          </div>
+          <div>
+            <h2 className="font-bold text-foreground">MediCare AI</h2>
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-xs text-muted-foreground">Powered by Groq · llama3-70b</span>
             </div>
           </div>
-          <Button variant="ghost" size="icon" onClick={() => setMessages([messages[0]])}>
-            <Plus className="h-5 w-5" />
-          </Button>
         </div>
+        <button onClick={() => setMessages([])}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-muted transition-colors">
+          <Trash2 size={14} /> New Chat
+        </button>
+      </div>
 
-        {/* Chat Messages */}
-        <ScrollArea className="flex-1 p-4 md:p-6" viewportRef={scrollRef}>
-          <div className="space-y-6 max-w-3xl mx-auto">
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={cn(
-                  "flex items-start gap-3",
-                  message.role === "user" ? "flex-row-reverse" : "flex-row"
-                )}
-              >
-                <div className={cn(
-                  "h-8 w-8 rounded-full flex items-center justify-center shrink-0",
-                  message.role === "assistant" ? "bg-primary text-primary-foreground" : "bg-muted border"
-                )}>
-                  {message.role === "assistant" ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
-                </div>
-                <div className={cn(
-                  "flex flex-col gap-1 max-w-[80%]",
-                  message.role === "user" ? "items-end" : "items-start"
-                )}>
-                  <div className={cn(
-                    "px-4 py-3 rounded-2xl text-sm leading-relaxed",
-                    message.role === "assistant" 
-                      ? "bg-muted text-foreground rounded-tl-none shadow-sm" 
-                      : "bg-primary text-primary-foreground rounded-tr-none shadow-md shadow-primary/10"
-                  )}>
-                    {message.content}
-                  </div>
-                  <span className="text-[10px] text-muted-foreground px-1">
-                    {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </div>
-              </div>
-            ))}
-            {isLoading && (
-              <div className="flex items-start gap-3">
-                <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center">
-                  <Bot className="h-4 w-4" />
-                </div>
-                <div className="bg-muted px-4 py-3 rounded-2xl rounded-tl-none">
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                </div>
-              </div>
-            )}
-          </div>
-        </ScrollArea>
-
-        {/* Suggested Prompts */}
-        {messages.length < 3 && (
-          <div className="px-4 pb-4 md:px-6">
-            <div className="flex flex-wrap gap-2 max-w-3xl mx-auto">
-              {SUGGESTED_PROMPTS.map((prompt) => (
-                <button
-                  key={prompt.text}
-                  onClick={() => handleSend(prompt.text)}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-full border bg-background hover:bg-muted transition-colors text-xs font-medium"
-                >
-                  <prompt.icon className="h-3 w-3 text-primary" />
-                  {prompt.text}
-                </button>
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto scrollbar-hide space-y-4 pb-4">
+        {messages.length === 0 && !streaming && (
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center justify-center h-full text-center py-10">
+            <div className="w-16 h-16 rounded-2xl gradient-hero flex items-center justify-center mb-4 shadow-lg">
+              <Sparkles size={28} className="text-white" />
+            </div>
+            <h3 className="text-xl font-bold text-foreground mb-2">Ask MediCare AI</h3>
+            <p className="text-muted-foreground text-sm mb-8 max-w-sm">Get instant, evidence-based health information. Not a substitute for professional medical advice.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
+              {SUGGESTED.map((s, i) => (
+                <motion.button key={i} onClick={() => sendMessage(s)}
+                  whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                  initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
+                  className="text-left px-4 py-3 rounded-xl bg-card border border-border hover:border-primary/50 hover:bg-primary/5 text-sm text-foreground transition-all">
+                  {s}
+                </motion.button>
               ))}
+            </div>
+          </motion.div>
+        )}
+
+        <AnimatePresence initial={false}>
+          {messages.map(msg => (
+            <motion.div key={msg.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+              className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 
+                ${msg.role === 'user' ? 'gradient-hero' : 'bg-muted border border-border'}`}>
+                {msg.role === 'user' ? <User size={14} className="text-white" /> : <Bot size={14} className="text-primary" />}
+              </div>
+              <div className={`group max-w-[75%] ${msg.role === 'user' ? 'items-end' : 'items-start'} flex flex-col gap-1`}>
+                <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed
+                  ${msg.role === 'user'
+                    ? 'gradient-hero text-white rounded-tr-sm'
+                    : 'bg-card border border-border text-foreground rounded-tl-sm'}`}>
+                  {msg.role === 'assistant' ? (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}
+                      components={{
+                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                        ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-1">{children}</ul>,
+                        ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-1">{children}</ol>,
+                        strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+                        code: ({ children }) => <code className="bg-muted px-1 py-0.5 rounded text-xs font-mono">{children}</code>,
+                      }}>
+                      {msg.content}
+                    </ReactMarkdown>
+                  ) : msg.content}
+                </div>
+                <div className={`flex items-center gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                  <span className="text-[10px] text-muted-foreground">{msg.time}</span>
+                  <button onClick={() => copyMsg(msg.content)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-muted">
+                    <Copy size={12} className="text-muted-foreground" />
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+
+        {/* Streaming bubble */}
+        {streaming && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex gap-3">
+            <div className="w-8 h-8 rounded-full bg-muted border border-border flex items-center justify-center flex-shrink-0">
+              <Bot size={14} className="text-primary" />
+            </div>
+            <div className="max-w-[75%] px-4 py-3 rounded-2xl rounded-tl-sm bg-card border border-border text-sm text-foreground">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{streaming}</ReactMarkdown>
+              <span className="inline-block w-1.5 h-4 bg-primary ml-0.5 animate-pulse" />
+            </div>
+          </motion.div>
+        )}
+
+        {loading && !streaming && (
+          <div className="flex gap-3">
+            <div className="w-8 h-8 rounded-full bg-muted border border-border flex items-center justify-center flex-shrink-0">
+              <Bot size={14} className="text-primary" />
+            </div>
+            <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-card border border-border flex gap-1.5 items-center">
+              {[0,1,2].map(i => <div key={i} className="w-2 h-2 rounded-full bg-primary/50 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />)}
             </div>
           </div>
         )}
+        <div ref={bottomRef} />
+      </div>
 
-        {/* Input Area */}
-        <div className="p-4 border-t bg-background">
-          <div className="max-w-3xl mx-auto space-y-4">
-            <form 
-              className="flex items-center gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSend();
-              }}
-            >
-              <Input 
-                placeholder="Ask anything about your health..." 
-                className="flex-1 h-12 bg-muted/30 border-none focus-visible:ring-primary focus-visible:ring-offset-0"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                disabled={isLoading}
-              />
-              <Button size="icon" className="h-12 w-12 rounded-xl" disabled={!input.trim() || isLoading}>
-                <Send className="h-5 w-5" />
-              </Button>
-            </form>
-            <div className="flex items-center justify-center gap-2 text-[10px] text-muted-foreground uppercase tracking-widest font-bold opacity-60">
-              <AlertCircle className="h-3 w-3" />
-              AI Assistant can make mistakes. Always consult a doctor.
-            </div>
+      {/* Input */}
+      <div className="flex-shrink-0 mt-2">
+        <div className="flex gap-3 bg-card border border-border rounded-2xl p-3 focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/10 transition-all">
+          <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKey}
+            placeholder="Ask about symptoms, medications, nutrition, or any health topic..."
+            rows={1} disabled={loading}
+            className="flex-1 bg-transparent text-foreground text-sm resize-none focus:outline-none placeholder:text-muted-foreground min-h-[40px] max-h-32 scrollbar-hide" />
+          <div className="flex items-end gap-2">
+            <motion.button onClick={() => sendMessage()} disabled={!input.trim() || loading}
+              whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+              className="w-10 h-10 rounded-xl gradient-hero flex items-center justify-center text-white disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">
+              <Send size={16} />
+            </motion.button>
           </div>
         </div>
+        <p className="text-center text-[10px] text-muted-foreground mt-2">
+          MediCare AI can make mistakes. Always consult a qualified healthcare professional for medical advice.
+        </p>
       </div>
     </div>
   );
