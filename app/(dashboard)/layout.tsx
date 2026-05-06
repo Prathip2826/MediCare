@@ -16,18 +16,50 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!auth) { router.push('/login'); return; }
-    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (!firebaseUser) { router.push('/login'); return; }
-      let profile: UserProfile = { email: firebaseUser.email ?? undefined, name: firebaseUser.displayName ?? undefined };
-      if (supabase) {
-        const { data } = await supabase.from('profiles').select('full_name').eq('id', firebaseUser.uid).single();
-        if (data) profile.name = data.full_name || profile.name;
-      }
-      setUser(profile);
+    // Safety timeout — if Firebase doesn't respond in 6s, redirect to login
+    const timeout = setTimeout(() => {
       setLoading(false);
+      router.push('/login');
+    }, 6000);
+
+    if (!auth) {
+      clearTimeout(timeout);
+      router.push('/login');
+      return;
+    }
+
+    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
+      clearTimeout(timeout);
+
+      if (!firebaseUser) {
+        router.push('/login');
+        return;
+      }
+
+      // Set user immediately — don't block on Supabase profile fetch
+      setUser({ email: firebaseUser.email ?? undefined, name: firebaseUser.displayName ?? undefined });
+      setLoading(false);
+
+      // Fetch profile in background (non-blocking)
+      if (supabase) {
+        supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', firebaseUser.uid)
+          .single()
+          .then(({ data }) => {
+            if (data?.full_name) {
+              setUser(prev => ({ ...prev, name: data.full_name }));
+            }
+          })
+          .catch(() => {}); // Ignore profile fetch errors silently
+      }
     });
-    return () => unsub();
+
+    return () => {
+      clearTimeout(timeout);
+      unsub();
+    };
   }, [router]);
 
   if (loading) return (
