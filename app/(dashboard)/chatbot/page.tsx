@@ -109,7 +109,7 @@ export default function ChatbotPage() {
             <h2 className="font-bold text-foreground">MediCare AI</h2>
             <div className="flex items-center gap-1.5">
               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-xs text-muted-foreground">Powered by Groq · llama3-70b</span>
+              <span className="text-xs text-muted-foreground">Powered by Groq · Llama 3.3 70B</span>
             </div>
           </div>
         </div>

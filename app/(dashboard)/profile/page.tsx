@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { User, Save, Camera, Shield, Download, Trash2, Loader2 } from 'lucide-react';
 import { auth } from '@/lib/firebase';
 import { supabase } from '@/lib/supabase';
-import { signOut } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 
@@ -27,11 +27,13 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showDelete, setShowDelete] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!auth) return;
-    const unsubscribe = auth.onAuthStateChanged(async (user: any) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) { setLoading(false); return; }
+      setUserId(user.uid);
       // Set initials from Firebase display name or email
       const name = user.displayName || user.email || 'U';
       setAvatarInitials(name.slice(0, 2).toUpperCase());
@@ -96,7 +98,7 @@ export default function ProfilePage() {
   };
 
   const save = async () => {
-    const uid = auth?.currentUser?.uid;
+    const uid = userId;
     if (!uid) { toast.error('Not authenticated'); return; }
     setSaving(true);
     try {
@@ -121,23 +123,20 @@ export default function ProfilePage() {
   };
 
   const handleDelete = async () => {
-    if (!auth) return;
+    if (!auth || !userId) return;
     try {
-      if (auth.currentUser) {
-        const uid = auth.currentUser.uid;
-        await fetch('/api/profile', {
-          method: 'DELETE',
-          headers: { 'x-user-id': uid },
-        });
-      }
-      if (auth) await signOut(auth);
+      await fetch('/api/profile', {
+        method: 'DELETE',
+        headers: { 'x-user-id': userId },
+      });
+      await signOut(auth);
       localStorage.clear();
       toast.success('Account deleted');
       router.push('/login');
     } catch { toast.error('Failed to delete account'); }
   };
 
-  const user = auth?.currentUser;
+  const user = auth?.currentUser;  // display-only (email)
   const bmi = form.height_cm && form.weight_kg
     ? (Number(form.weight_kg) / Math.pow(Number(form.height_cm) / 100, 2)).toFixed(1)
     : null;
