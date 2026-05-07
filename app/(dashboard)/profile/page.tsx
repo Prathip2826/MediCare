@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { User, Save, Camera, Shield, Download, Trash2 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { User, Save, Camera, Shield, Download, Trash2, Loader2 } from 'lucide-react';
 import { auth } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 import { signOut } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
@@ -15,59 +15,120 @@ const BLOOD_TYPES = ['A+','A-','B+','B-','AB+','AB-','O+','O-'];
 
 export default function ProfilePage() {
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({
     full_name: '', date_of_birth: '', gender: '', blood_type: '',
     height_cm: '', weight_kg: '', allergies: '', medical_conditions: '',
     emergency_contact_name: '', emergency_contact_phone: '',
   });
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [avatarInitials, setAvatarInitials] = useState('U');
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showDelete, setShowDelete] = useState(false);
 
   useEffect(() => {
-    const load = async () => {
-      if (!supabase || !auth?.currentUser) { setLoading(false); return; }
-      const { data } = await supabase.from('profiles').select('*').eq('id', auth.currentUser.uid).single();
-      if (data) {
-        setForm({
-          full_name: data.full_name || '',
-          date_of_birth: data.date_of_birth || '',
-          gender: data.gender || '',
-          blood_type: data.blood_type || '',
-          height_cm: data.height_cm?.toString() || '',
-          weight_kg: data.weight_kg?.toString() || '',
-          allergies: data.allergies || '',
-          medical_conditions: data.medical_conditions || '',
-          emergency_contact_name: data.emergency_contact_name || '',
-          emergency_contact_phone: data.emergency_contact_phone || '',
-        });
-      }
+    if (!auth) return;
+    const unsubscribe = auth.onAuthStateChanged(async (user: any) => {
+      if (!user) { setLoading(false); return; }
+      // Set initials from Firebase display name or email
+      const name = user.displayName || user.email || 'U';
+      setAvatarInitials(name.slice(0, 2).toUpperCase());
+      try {
+        const res = await fetch('/api/profile', { headers: { 'x-user-id': user.uid } });
+        if (res.ok) {
+          const data = await res.json();
+          if (data) {
+            setForm({
+              full_name: data.full_name || '',
+              date_of_birth: data.date_of_birth || '',
+              gender: data.gender || '',
+              blood_type: data.blood_type || '',
+              height_cm: data.height_cm?.toString() || '',
+              weight_kg: data.weight_kg?.toString() || '',
+              allergies: data.allergies || '',
+              medical_conditions: data.medical_conditions || '',
+              emergency_contact_name: data.emergency_contact_name || '',
+              emergency_contact_phone: data.emergency_contact_phone || '',
+            });
+            if (data.full_name) setAvatarInitials(data.full_name.slice(0, 2).toUpperCase());
+            if (data.avatar_url) setAvatarUrl(data.avatar_url);
+          }
+        }
+      } catch (e) { console.error('Failed to load profile:', e); }
       setLoading(false);
-    };
-    load();
+    });
+    return () => unsubscribe();
   }, []);
 
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !auth?.currentUser || !supabase) return;
+    if (file.size > 2 * 1024 * 1024) { toast.error('Image must be under 2MB'); return; }
+
+    setUploadingPhoto(true);
+    try {
+      const uid = auth.currentUser.uid;
+      const ext = file.name.split('.').pop();
+      const filePath = `avatars/${uid}.${ext}`;
+      const { error: uploadError } = await supabase.storage
+        .from('medical-reports')
+        .upload(filePath, file, { upsert: true });
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('medical-reports')
+        .getPublicUrl(filePath);
+
+      setAvatarUrl(publicUrl);
+      // Save avatar_url to profile
+      await fetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
+        body: JSON.stringify({ avatar_url: publicUrl }),
+      });
+      toast.success('Photo updated! ✅');
+    } catch (err: any) {
+      toast.error('Failed to upload photo');
+    }
+    setUploadingPhoto(false);
+  };
+
   const save = async () => {
-    if (!supabase || !auth?.currentUser) { toast.error('Not authenticated'); return; }
+    const uid = auth?.currentUser?.uid;
+    if (!uid) { toast.error('Not authenticated'); return; }
     setSaving(true);
-    const { error } = await supabase.from('profiles').upsert({
-      id: auth.currentUser.uid,
-      email: auth.currentUser.email,
-      ...form,
-      height_cm: form.height_cm ? Number(form.height_cm) : null,
-      weight_kg: form.weight_kg ? Number(form.weight_kg) : null,
-      updated_at: new Date().toISOString(),
-    });
-    if (error) toast.error(error.message);
-    else toast.success('Profile saved successfully! ✅');
+    try {
+      const res = await fetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
+        body: JSON.stringify({
+          ...form,
+          height_cm: form.height_cm ? Number(form.height_cm) : null,
+          weight_kg: form.weight_kg ? Number(form.weight_kg) : null,
+        }),
+      });
+      if (res.ok) {
+        if (form.full_name) setAvatarInitials(form.full_name.slice(0, 2).toUpperCase());
+        toast.success('Profile saved successfully! ✅');
+      } else {
+        const err = await res.json();
+        toast.error(err.error || 'Failed to save profile');
+      }
+    } catch { toast.error('Failed to save profile'); }
     setSaving(false);
   };
 
   const handleDelete = async () => {
     if (!auth) return;
     try {
-      if (auth.currentUser && supabase) {
-        await supabase.from('profiles').delete().eq('id', auth.currentUser.uid);
+      if (auth.currentUser) {
+        const uid = auth.currentUser.uid;
+        await fetch('/api/profile', {
+          method: 'DELETE',
+          headers: { 'x-user-id': uid },
+        });
       }
       if (auth) await signOut(auth);
       localStorage.clear();
@@ -77,7 +138,6 @@ export default function ProfilePage() {
   };
 
   const user = auth?.currentUser;
-  const initials = (form.full_name || user?.email || 'U').slice(0, 2).toUpperCase();
   const bmi = form.height_cm && form.weight_kg
     ? (Number(form.weight_kg) / Math.pow(Number(form.height_cm) / 100, 2)).toFixed(1)
     : null;
@@ -96,12 +156,22 @@ export default function ProfilePage() {
         className="bg-card border border-border rounded-2xl p-6">
         <div className="flex items-center gap-5">
           <div className="relative">
-            <div className="w-20 h-20 rounded-2xl gradient-hero flex items-center justify-center text-white text-2xl font-extrabold shadow-lg">
-              {initials}
-            </div>
-            <button className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-card border border-border flex items-center justify-center hover:bg-muted transition-colors">
-              <Camera size={13} className="text-muted-foreground" />
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="Avatar"
+                className="w-20 h-20 rounded-2xl object-cover shadow-lg" />
+            ) : (
+              <div className="w-20 h-20 rounded-2xl gradient-hero flex items-center justify-center text-white text-2xl font-extrabold shadow-lg">
+                {avatarInitials}
+              </div>
+            )}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadingPhoto}
+              className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-card border border-border flex items-center justify-center hover:bg-muted transition-colors"
+            >
+              {uploadingPhoto ? <Loader2 size={13} className="animate-spin text-primary" /> : <Camera size={13} className="text-muted-foreground" />}
             </button>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
           </div>
           <div>
             <h2 className="text-xl font-extrabold text-foreground">{form.full_name || 'Your Name'}</h2>
@@ -192,7 +262,7 @@ export default function ProfilePage() {
         className="flex flex-wrap gap-3">
         <motion.button onClick={save} disabled={saving} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
           className="flex items-center gap-2 px-6 py-3 rounded-xl gradient-hero text-white font-semibold text-sm btn-glow disabled:opacity-50">
-          <Save size={16} />{saving ? 'Saving...' : 'Save Profile'}
+          {saving ? <><Loader2 size={16} className="animate-spin" /> Saving...</> : <><Save size={16} /> Save Profile</>}
         </motion.button>
         <button className="flex items-center gap-2 px-5 py-3 rounded-xl border border-border text-foreground text-sm font-medium hover:bg-muted transition-colors">
           <Download size={16} /> Export Data

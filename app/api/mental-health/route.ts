@@ -1,24 +1,20 @@
 import { NextResponse } from "next/server";
 export const dynamic = 'force-dynamic';
-import { supabase } from "@/lib/supabase";
-import { getServerUser } from "@/lib/supabase-server";
+import { supabaseAdmin } from "@/lib/supabase-server";
 
 export async function GET(req: Request) {
   try {
-    const user = await getServerUser();
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const userId = req.headers.get("x-user-id");
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('mood_logs')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .order('logged_at', { ascending: false })
       .limit(30);
 
     if (error) throw error;
-
     return NextResponse.json(data);
   } catch (error: any) {
     console.error("Mental health fetch error:", error);
@@ -28,29 +24,24 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const user = await getServerUser();
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const userId = req.headers.get("x-user-id");
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { mood_score, mood_label, notes } = await req.json();
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('mood_logs')
-      .insert([
-        { 
-          user_id: user.id, 
-          mood_score, 
-          mood_label, 
-          notes,
-          logged_at: new Date().toISOString()
-        }
-      ])
+      .insert([{
+        user_id: userId,
+        mood_score,
+        mood_label,
+        notes,
+        logged_at: new Date().toISOString()
+      }])
       .select()
       .single();
 
     if (error) throw error;
-
     return NextResponse.json(data);
   } catch (error: any) {
     console.error("Mental health post error:", error);

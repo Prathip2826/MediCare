@@ -18,7 +18,7 @@ import toast from 'react-hot-toast';
 const NAV_ITEMS = [
   { href: '/dashboard',      label: 'Dashboard',       icon: Home,          badge: null },
   { href: '/symptoms',       label: 'Symptom Checker', icon: Activity,      badge: null },
-  { href: '/medicines',      label: 'Medicine Tracker',icon: Pill,          badge: 3 },
+  { href: '/medicines',      label: 'Medicine Tracker',icon: Pill,          badge: null },
   { href: '/reports',        label: 'Medical Reports', icon: FileText,      badge: null },
   { href: '/nutrition',      label: 'Nutrition',       icon: Apple,         badge: null },
   { href: '/fitness',        label: 'Fitness',         icon: Dumbbell,      badge: null },

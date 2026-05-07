@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Dumbbell, Plus, Trash2, Flame, Target, Trophy } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { supabase } from '@/lib/supabase';
 import { auth } from '@/lib/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 import toast from 'react-hot-toast';
 
 export const dynamic = 'force-dynamic';
@@ -21,36 +21,67 @@ export default function FitnessPage() {
   const [stepGoal] = useState(10000);
   const [saving, setSaving] = useState(false);
   const [weeklyData, setWeeklyData] = useState<{ day: string; calories: number }[]>([]);
+  const [userId, setUserId] = useState<string | null>(null);
 
-  useEffect(() => { fetchLogs(); }, []);
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) { setUserId(user.uid); fetchLogs(user.uid); }
+    });
+    return () => unsub();
+  }, []);
 
-  const fetchLogs = async () => {
-    if (!supabase || !auth?.currentUser) return;
-    const { data } = await supabase.from('fitness_logs').select('*')
-      .eq('user_id', auth.currentUser.uid).order('created_at', { ascending: false }).limit(30);
-    if (data) {
+  const fetchLogs = async (uid: string) => {
+    try {
+      const res = await fetch('/api/fitness', { headers: { 'x-user-id': uid } });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
       setLogs(data);
-      // Build weekly chart
       const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
       const weekly = days.map(day => ({ day, calories: 0 }));
       data.slice(0, 7).forEach((log: FitnessLog, i: number) => { if (i < 7) weekly[i].calories = log.calories_burned || 0; });
       setWeeklyData(weekly);
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to load fitness logs');
     }
   };
 
   const addLog = async () => {
     if (!form.duration_minutes) { toast.error('Duration is required'); return; }
-    if (!supabase || !auth?.currentUser) return;
+    if (!userId) { toast.error('Not authenticated'); return; }
     setSaving(true);
-    const { error } = await supabase.from('fitness_logs').insert({
-      user_id: auth.currentUser.uid, exercise_type: form.exercise_type,
-      duration_minutes: Number(form.duration_minutes),
-      calories_burned: Number(form.calories_burned) || 0,
-      notes: form.notes,
-    });
-    if (error) toast.error(error.message);
-    else { toast.success('Exercise logged! 🔥'); setForm({ exercise_type: 'Running', duration_minutes: '', calories_burned: '', notes: '' }); fetchLogs(); }
-    setSaving(false);
+    try {
+      const res = await fetch('/api/fitness', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+        body: JSON.stringify({
+          exercise_type: form.exercise_type,
+          duration_minutes: Number(form.duration_minutes),
+          calories_burned: Number(form.calories_burned) || 0,
+          notes: form.notes,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      toast.success('Exercise logged! 🔥');
+      setForm({ exercise_type: 'Running', duration_minutes: '', calories_burned: '', notes: '' });
+      fetchLogs(userId);
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to save log');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteLog = async (id: string) => {
+    if (!userId) return;
+    try {
+      const res = await fetch(`/api/fitness?id=${id}`, { method: 'DELETE', headers: { 'x-user-id': userId } });
+      if (!res.ok) throw new Error('Failed to delete');
+      toast.success('Log removed');
+      fetchLogs(userId);
+    } catch {
+      toast.error('Could not delete log');
+    }
   };
 
   const todayLogs = logs.filter(l => l.created_at?.startsWith(new Date().toISOString().split('T')[0]));
@@ -160,7 +191,7 @@ export default function FitnessPage() {
           <h3 className="font-semibold text-foreground mb-4">Recent Workouts</h3>
           <div className="space-y-2">
             {logs.slice(0, 8).map((l, i) => (
-              <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-muted/50 hover:bg-muted transition-colors">
+              <div key={l.id ?? i} className="flex items-center justify-between p-3 rounded-xl bg-muted/50 hover:bg-muted transition-colors">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
                     <Dumbbell size={16} className="text-primary" />
@@ -170,7 +201,14 @@ export default function FitnessPage() {
                     <p className="text-xs text-muted-foreground">{l.duration_minutes} min · {l.calories_burned} kcal</p>
                   </div>
                 </div>
-                <span className="text-xs text-muted-foreground">{l.created_at ? new Date(l.created_at).toLocaleDateString() : ''}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-muted-foreground">{l.created_at ? new Date(l.created_at).toLocaleDateString() : ''}</span>
+                  {l.id && (
+                    <button onClick={() => deleteLog(l.id!)} className="text-muted-foreground hover:text-red-500 transition-colors">
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>

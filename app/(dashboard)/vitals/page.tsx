@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { BarChart2, Plus, TrendingUp, TrendingDown, AlertCircle } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { supabase } from '@/lib/supabase';
 import { auth } from '@/lib/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 import toast from 'react-hot-toast';
 
 export const dynamic = 'force-dynamic';
@@ -25,29 +25,48 @@ interface VitalEntry { [key: string]: number | string; created_at: string; }
 export default function VitalsPage() {
   const [entries, setEntries] = useState<VitalEntry[]>([]);
   const [form, setForm] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
 
-  useEffect(() => { fetchVitals(); }, []);
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) { setUserId(user.uid); fetchVitals(user.uid); }
+    });
+    return () => unsub();
+  }, []);
 
-  const fetchVitals = async () => {
-    if (!supabase || !auth?.currentUser) return;
-    setLoading(true);
-    const { data } = await supabase.from('vital_signs').select('*')
-      .eq('user_id', auth.currentUser.uid).order('created_at', { ascending: false }).limit(20);
-    if (data) setEntries(data);
-    setLoading(false);
+  const fetchVitals = async (uid: string) => {
+    try {
+      const res = await fetch('/api/vitals', { headers: { 'x-user-id': uid } });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setEntries(data);
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to load vitals');
+    }
   };
 
   const saveVitals = async () => {
-    if (!supabase || !auth?.currentUser) { toast.error('Not authenticated'); return; }
+    if (!userId) { toast.error('Not authenticated'); return; }
+    const hasValues = Object.values(form).some(v => v !== '');
+    if (!hasValues) { toast.error('Enter at least one vital value'); return; }
     setSaving(true);
-    const payload: Record<string, number | string> = { user_id: auth.currentUser.uid };
-    Object.entries(form).forEach(([k, v]) => { if (v) payload[k] = parseFloat(v); });
-    const { error } = await supabase.from('vital_signs').insert(payload);
-    if (error) toast.error(error.message);
-    else { toast.success('Vitals saved!'); setForm({}); fetchVitals(); }
-    setSaving(false);
+    try {
+      const res = await fetch('/api/vitals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+        body: JSON.stringify(form),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      toast.success('Vitals saved!');
+      setForm({});
+      fetchVitals(userId);
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to save vitals');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const getStatus = (key: string, val: number) => {

@@ -1,17 +1,17 @@
 import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
-import { supabaseAdmin, getServerUser } from '@/lib/supabase-server';
+import { supabaseAdmin } from '@/lib/supabase-server';
 
-export async function GET() {
-  const user = await getServerUser();
-  if (!user) {
+export async function GET(req: Request) {
+  const userId = req.headers.get('x-user-id');
+  if (!userId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const { data, error } = await supabaseAdmin
     .from('medicines')
     .select('*')
-    .eq('user_id', user.id)
+    .eq('user_id', userId)
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -22,8 +22,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const user = await getServerUser();
-  if (!user) {
+  const userId = req.headers.get('x-user-id');
+  if (!userId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -33,7 +33,7 @@ export async function POST(req: Request) {
   const { data, error } = await supabaseAdmin
     .from('medicines')
     .insert({
-      user_id: user.id,
+      user_id: userId,
       name,
       dosage,
       frequency,
@@ -52,8 +52,8 @@ export async function POST(req: Request) {
 }
 
 export async function PATCH(req: Request) {
-  const user = await getServerUser();
-  if (!user) {
+  const userId = req.headers.get('x-user-id');
+  if (!userId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -64,7 +64,7 @@ export async function PATCH(req: Request) {
     .from('medicines')
     .update(updates)
     .eq('id', id)
-    .eq('user_id', user.id)
+    .eq('user_id', userId)
     .select()
     .single();
 
@@ -76,8 +76,8 @@ export async function PATCH(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  const user = await getServerUser();
-  if (!user) {
+  const userId = req.headers.get('x-user-id');
+  if (!userId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -92,7 +92,7 @@ export async function DELETE(req: Request) {
     .from('medicines')
     .delete()
     .eq('id', id)
-    .eq('user_id', user.id);
+    .eq('user_id', userId);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

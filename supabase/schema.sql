@@ -103,3 +103,86 @@ CREATE TABLE IF NOT EXISTS medicines (
 ALTER TABLE medicines ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users manage own medicines" ON medicines;
 CREATE POLICY "Users manage own medicines" ON medicines FOR ALL USING (true);
+
+-- Appointments
+CREATE TABLE IF NOT EXISTS appointments (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id text NOT NULL,
+  doctor_name text NOT NULL,
+  specialization text,
+  hospital text,
+  appointment_date timestamptz NOT NULL,
+  notes text,
+  status text DEFAULT 'upcoming' CHECK (status IN ('upcoming', 'completed', 'cancelled')),
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users manage own appointments" ON appointments;
+CREATE POLICY "Users manage own appointments" ON appointments FOR ALL USING (true);
+
+-- Mood Logs (Mental Health)
+CREATE TABLE IF NOT EXISTS mood_logs (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id text NOT NULL,
+  mood_score integer CHECK (mood_score BETWEEN 1 AND 5),
+  mood_label text,
+  notes text,
+  logged_at timestamptz DEFAULT now()
+);
+ALTER TABLE mood_logs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users manage own mood logs" ON mood_logs;
+CREATE POLICY "Users manage own mood logs" ON mood_logs FOR ALL USING (true);
+
+-- Medical Reports
+CREATE TABLE IF NOT EXISTS medical_reports (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id text NOT NULL,
+  title text NOT NULL,
+  report_type text DEFAULT 'Other',
+  file_type text,
+  file_url text NOT NULL,
+  file_path text,
+  ai_summarized boolean DEFAULT false,
+  ai_summary jsonb,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+ALTER TABLE medical_reports ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users manage own medical reports" ON medical_reports;
+CREATE POLICY "Users manage own medical reports" ON medical_reports FOR ALL USING (true);
+
+-- Health Metrics
+CREATE TABLE IF NOT EXISTS health_metrics (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id text NOT NULL,
+  metric_type text NOT NULL,
+  value numeric NOT NULL,
+  unit text,
+  recorded_at timestamptz DEFAULT now()
+);
+ALTER TABLE health_metrics ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users manage own health metrics" ON health_metrics;
+CREATE POLICY "Users manage own health metrics" ON health_metrics FOR ALL USING (true);
+
+-- Medicine Logs (intake tracking)
+CREATE TABLE IF NOT EXISTS medicine_logs (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id text NOT NULL,
+  medicine_id uuid REFERENCES medicines(id) ON DELETE CASCADE,
+  taken_at timestamptz DEFAULT now(),
+  status text DEFAULT 'taken' CHECK (status IN ('taken', 'skipped', 'missed'))
+);
+ALTER TABLE medicine_logs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users manage own medicine logs" ON medicine_logs;
+CREATE POLICY "Users manage own medicine logs" ON medicine_logs FOR ALL USING (true);
+
+-- ─────────────────────────────────────────────
+-- Storage: create the medical-reports bucket
+-- Run once in Supabase dashboard → Storage → New Bucket
+-- OR via SQL using the storage schema:
+-- ─────────────────────────────────────────────
+-- INSERT INTO storage.buckets (id, name, public)
+-- VALUES ('medical-reports', 'medical-reports', true)
+-- ON CONFLICT (id) DO NOTHING;
+

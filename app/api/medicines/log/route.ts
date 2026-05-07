@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
-import { supabaseAdmin, getServerUser } from '@/lib/supabase-server';
+import { supabaseAdmin } from '@/lib/supabase-server';
 import { startOfDay, endOfDay } from 'date-fns';
 
 export async function GET(req: Request) {
-  const user = await getServerUser();
-  if (!user) {
+  const userId = req.headers.get('x-user-id');
+  if (!userId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -16,7 +16,7 @@ export async function GET(req: Request) {
   let query = supabaseAdmin
     .from('medicine_logs')
     .select('*')
-    .eq('user_id', user.id);
+    .eq('user_id', userId);
 
   if (medicineId) {
     query = query.eq('medicine_id', medicineId);
@@ -38,8 +38,8 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const user = await getServerUser();
-  if (!user) {
+  const userId = req.headers.get('x-user-id');
+  if (!userId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -53,7 +53,7 @@ export async function POST(req: Request) {
   const { data, error } = await supabaseAdmin
     .from('medicine_logs')
     .insert({
-      user_id: user.id,
+      user_id: userId,
       medicine_id,
       status,
       taken_at: new Date().toISOString(),

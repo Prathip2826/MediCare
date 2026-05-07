@@ -1,17 +1,17 @@
 import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
-import { supabaseAdmin, getServerUser } from '@/lib/supabase-server';
+import { supabaseAdmin } from '@/lib/supabase-server';
 
-export async function GET() {
-  const user = await getServerUser();
-  if (!user) {
+export async function GET(req: Request) {
+  const userId = req.headers.get('x-user-id');
+  if (!userId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const { data, error } = await supabaseAdmin
     .from('appointments')
     .select('*')
-    .eq('user_id', user.id)
+    .eq('user_id', userId)
     .order('appointment_date', { ascending: true });
 
   if (error) {
@@ -22,8 +22,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const user = await getServerUser();
-  if (!user) {
+  const userId = req.headers.get('x-user-id');
+  if (!userId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -33,7 +33,7 @@ export async function POST(req: Request) {
   const { data, error } = await supabaseAdmin
     .from('appointments')
     .insert({
-      user_id: user.id,
+      user_id: userId,
       doctor_name,
       specialization,
       hospital,
@@ -51,8 +51,8 @@ export async function POST(req: Request) {
 }
 
 export async function PATCH(req: Request) {
-  const user = await getServerUser();
-  if (!user) {
+  const userId = req.headers.get('x-user-id');
+  if (!userId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -63,7 +63,7 @@ export async function PATCH(req: Request) {
     .from('appointments')
     .update(updates)
     .eq('id', id)
-    .eq('user_id', user.id)
+    .eq('user_id', userId)
     .select()
     .single();
 
@@ -72,4 +72,29 @@ export async function PATCH(req: Request) {
   }
 
   return NextResponse.json(data);
+}
+
+export async function DELETE(req: Request) {
+  const userId = req.headers.get('x-user-id');
+  if (!userId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { searchParams } = new URL(req.url);
+  const id = searchParams.get('id');
+  if (!id) {
+    return NextResponse.json({ error: 'Missing appointment ID' }, { status: 400 });
+  }
+
+  const { error } = await supabaseAdmin
+    .from('appointments')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', userId);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
 }

@@ -55,6 +55,9 @@ export default function SymptomsPage() {
         body: JSON.stringify({ symptoms: selected, duration, severity, age, gender }),
       });
 
+      if (!res.ok) {
+        throw new Error('Server error');
+      }
       if (!res.body) throw new Error('No response');
       const reader = res.body.getReader();
       const decoder = new TextDecoder();

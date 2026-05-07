@@ -41,6 +41,7 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { auth } from "@/lib/firebase";
 
 const MOODS = [
   { label: "Great", icon: Sun, color: "text-yellow-500", bg: "bg-yellow-500/10", value: 5 },
@@ -72,63 +73,69 @@ export default function MentalHealthPage() {
   const [toolkitContent, setToolkitContent] = useState<{ title: string, content: React.ReactNode } | null>(null);
   const [isToolkitOpen, setIsToolkitOpen] = useState(false);
 
+  const getUid = () => auth?.currentUser?.uid || '';
+
   useEffect(() => {
-    fetchMoodLogs();
+    const unsub = auth?.onAuthStateChanged?.((user: any) => {
+      if (user) fetchMoodLogs();
+      else setLoading(false);
+    });
     setAffirmation(AFFIRMATIONS[Math.floor(Math.random() * AFFIRMATIONS.length)]);
+    return () => unsub?.();
   }, []);
 
   const fetchMoodLogs = async () => {
+    const uid = getUid();
+    if (!uid) return;
     try {
       setLoading(true);
-      const res = await fetch('/api/mental-health');
+      const res = await fetch('/api/mental-health', { headers: { 'x-user-id': uid } });
       const data = await res.json();
-      if (res.ok) {
-        setMoodLogs(data);
-      }
+      if (res.ok) setMoodLogs(data);
     } catch (error) {
-      console.error("Failed to fetch mood logs:", error);
+      console.error('Failed to fetch mood logs:', error);
     } finally {
       setLoading(false);
     }
   };
 
   const handleMoodSelect = async (moodValue: number, moodLabel: string) => {
+    const uid = getUid();
+    if (!uid) return;
     setSelectedMood(moodValue);
     try {
       const res = await fetch('/api/mental-health', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
         body: JSON.stringify({ mood_score: moodValue, mood_label: moodLabel }),
       });
       if (res.ok) {
-        toast.success("Mood logged successfully");
+        toast.success('Mood logged successfully');
         fetchMoodLogs();
       }
     } catch (error) {
-      toast.error("Failed to log mood");
+      toast.error('Failed to log mood');
     }
   };
 
   const handleSaveJournal = async () => {
     if (!journalNote) return;
+    const uid = getUid();
+    if (!uid) return;
     try {
       const res = await fetch('/api/mental-health', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          mood_score: selectedMood || 3, 
-          mood_label: "Journal Entry", 
-          notes: journalNote 
-        }),
+        headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
+        body: JSON.stringify({ mood_score: selectedMood || 3, mood_label: 'Journal Entry', notes: journalNote }),
       });
       if (res.ok) {
-        toast.success("Journal entry saved");
-        setJournalNote("");
+        toast.success('Journal entry saved');
+        setJournalNote('');
         setIsJournalOpen(false);
         fetchMoodLogs();
       }
     } catch (error) {
-      toast.error("Failed to save journal entry");
+      toast.error('Failed to save journal entry');
     }
   };
 

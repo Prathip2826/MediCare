@@ -1,10 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Apple, Plus, Trash2, Droplets, Brain } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Apple, Plus, Trash2, Droplets, Brain, Sparkles, Loader2 } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { supabase } from '@/lib/supabase';
 import { auth } from '@/lib/firebase';
 import toast from 'react-hot-toast';
 
@@ -22,36 +21,113 @@ export default function NutritionPage() {
   const [calorieGoal] = useState(2000);
   const [aiTip, setAiTip] = useState('');
   const [loadingTip, setLoadingTip] = useState(false);
+  const [autoFilling, setAutoFilling] = useState(false);
+  const autoFillTimer = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => { fetchLogs(); }, []);
 
+  const getUid = () => auth?.currentUser?.uid || '';
+
   const fetchLogs = async () => {
-    if (!supabase || !auth?.currentUser) return;
-    const today = new Date().toISOString().split('T')[0];
-    const { data } = await supabase.from('nutrition_logs').select('*')
-      .eq('user_id', auth.currentUser.uid)
-      .gte('created_at', today).order('created_at', { ascending: false });
-    if (data) setLogs(data);
+    const uid = getUid();
+    if (!uid) return;
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const res = await fetch(`/api/nutrition?date=${today}`, { headers: { 'x-user-id': uid } });
+      const data = await res.json();
+      if (res.ok && Array.isArray(data)) setLogs(data);
+    } catch (e) { console.error(e); }
+  };
+
+  // AI auto-fill macros after user stops typing food name
+  const handleFoodNameChange = (value: string) => {
+    setForm(p => ({ ...p, food_name: value }));
+    if (autoFillTimer.current) clearTimeout(autoFillTimer.current);
+    if (value.trim().length > 2) {
+      autoFillTimer.current = setTimeout(() => autoFillMacros(value.trim()), 800);
+    }
+  };
+
+  const autoFillMacros = async (foodName: string) => {
+    setAutoFilling(true);
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{
+            role: 'user',
+            content: `Give me the approximate nutritional info for a standard serving of "${foodName}". 
+            Reply ONLY with a JSON object like this (no markdown, no extra text):
+            {"calories":250,"protein":20,"carbs":30,"fat":8}`
+          }]
+        }),
+      });
+      if (!res.body) throw new Error();
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let full = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const lines = decoder.decode(value).split('\n').filter(l => l.startsWith('data: '));
+        for (const line of lines) {
+          const data = line.replace('data: ', '').trim();
+          if (data === '[DONE]') break;
+          try { full += JSON.parse(data).choices?.[0]?.delta?.content || ''; } catch {}
+        }
+      }
+      // Extract JSON from response
+      const match = full.match(/\{[^}]+\}/);
+      if (match) {
+        const parsed = JSON.parse(match[0]);
+        setForm(p => ({
+          ...p,
+          calories: String(parsed.calories || ''),
+          protein: String(parsed.protein || ''),
+          carbs: String(parsed.carbs || ''),
+          fat: String(parsed.fat || ''),
+        }));
+        toast.success('Macros auto-filled by AI ✨', { duration: 2000 });
+      }
+    } catch { /* silently fail - user can fill manually */ }
+    setAutoFilling(false);
   };
 
   const addMeal = async () => {
     if (!form.food_name || !form.calories) { toast.error('Food name and calories are required'); return; }
-    if (!supabase || !auth?.currentUser) return;
+    const uid = getUid();
+    if (!uid) { toast.error('Please sign in'); return; }
     setSaving(true);
-    const { error } = await supabase.from('nutrition_logs').insert({
-      user_id: auth.currentUser.uid,
-      meal_type: form.meal_type, food_name: form.food_name,
-      calories: Number(form.calories), protein: Number(form.protein) || 0,
-      carbs: Number(form.carbs) || 0, fat: Number(form.fat) || 0,
-    });
-    if (error) toast.error(error.message);
-    else { toast.success('Meal logged!'); setForm({ meal_type: 'Breakfast', food_name: '', calories: '', protein: '', carbs: '', fat: '' }); fetchLogs(); }
+    try {
+      const res = await fetch('/api/nutrition', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
+        body: JSON.stringify({
+          meal_type: form.meal_type,
+          food_name: form.food_name,
+          calories: Number(form.calories),
+          protein: Number(form.protein) || 0,
+          carbs: Number(form.carbs) || 0,
+          fat: Number(form.fat) || 0,
+        }),
+      });
+      if (res.ok) {
+        toast.success('Meal logged!');
+        setForm({ meal_type: 'Breakfast', food_name: '', calories: '', protein: '', carbs: '', fat: '' });
+        fetchLogs();
+      } else {
+        const err = await res.json();
+        toast.error(err.error || 'Failed to save meal');
+      }
+    } catch { toast.error('Failed to save meal'); }
     setSaving(false);
   };
 
   const deleteLog = async (id?: string) => {
-    if (!id || !supabase) return;
-    await supabase.from('nutrition_logs').delete().eq('id', id);
+    if (!id) return;
+    const uid = getUid();
+    await fetch(`/api/nutrition?id=${id}`, { method: 'DELETE', headers: { 'x-user-id': uid } });
     setLogs(prev => prev.filter(l => l.id !== id));
     toast.success('Removed');
   };
@@ -147,9 +223,15 @@ export default function NutritionPage() {
       {/* Add Meal */}
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
         className="bg-card border border-border rounded-2xl p-5">
-        <div className="flex items-center gap-2 mb-4">
+        <div className="flex items-center gap-2 mb-1">
           <Plus size={18} className="text-primary" /><h3 className="font-bold text-foreground">Log a Meal</h3>
+          {autoFilling && (
+            <span className="ml-auto flex items-center gap-1.5 text-xs text-primary">
+              <Sparkles size={12} className="animate-pulse" /> AI filling macros...
+            </span>
+          )}
         </div>
+        <p className="text-xs text-muted-foreground mb-4">Type a food name and AI will auto-fill the nutritional values!</p>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
           <div>
             <label className="text-xs text-muted-foreground mb-1 block">Meal Type</label>
@@ -158,10 +240,17 @@ export default function NutritionPage() {
               {MEAL_TYPES.map(m => <option key={m}>{m}</option>)}
             </select>
           </div>
-          <div className="md:col-span-2">
-            <label className="text-xs text-muted-foreground mb-1 block">Food Name *</label>
-            <input value={form.food_name} onChange={e => setForm(p => ({ ...p, food_name: e.target.value }))} placeholder="e.g. Grilled Chicken Salad"
-              className="w-full px-3 py-2 rounded-xl border border-border bg-muted/50 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30" />
+          <div className="md:col-span-2 relative">
+            <label className="text-xs text-muted-foreground mb-1 block">Food Name * <span className="text-primary">(AI auto-fills macros)</span></label>
+            <input
+              value={form.food_name}
+              onChange={e => handleFoodNameChange(e.target.value)}
+              placeholder="e.g. Grilled Chicken Salad"
+              className="w-full px-3 py-2 rounded-xl border border-border bg-muted/50 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+            {autoFilling && (
+              <Loader2 size={14} className="absolute right-3 top-8 animate-spin text-primary" />
+            )}
           </div>
           {[['calories', 'Calories (kcal) *'], ['protein', 'Protein (g)'], ['carbs', 'Carbs (g)'], ['fat', 'Fat (g)']].map(([key, label]) => (
             <div key={key}>
@@ -171,7 +260,7 @@ export default function NutritionPage() {
             </div>
           ))}
         </div>
-        <motion.button onClick={addMeal} disabled={saving} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
+        <motion.button onClick={addMeal} disabled={saving || autoFilling} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
           className="px-6 py-2.5 rounded-xl gradient-hero text-white font-semibold text-sm btn-glow disabled:opacity-50">
           {saving ? 'Saving...' : 'Add Meal'}
         </motion.button>
@@ -207,8 +296,8 @@ export default function NutritionPage() {
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2"><Brain size={16} className="text-primary" /><h3 className="font-semibold text-foreground">AI Nutrition Advice</h3></div>
           <button onClick={getAiTip} disabled={loadingTip || logs.length === 0}
-            className="text-xs px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50">
-            {loadingTip ? 'Analyzing...' : 'Get AI Tips'}
+            className="text-xs px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50 flex items-center gap-1.5">
+            {loadingTip ? <><Loader2 size={12} className="animate-spin" /> Analyzing...</> : <><Sparkles size={12} /> Get AI Tips</>}
           </button>
         </div>
         {aiTip ? <p className="text-sm text-foreground leading-relaxed">{aiTip}</p>

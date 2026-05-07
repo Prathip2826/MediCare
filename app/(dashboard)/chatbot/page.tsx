@@ -52,6 +52,10 @@ export default function ChatbotPage() {
         body: JSON.stringify({ messages: [...messages, userMsg].map(m => ({ role: m.role, content: m.content })) }),
       });
 
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`Server error: ${errorText}`);
+      }
       if (!res.body) throw new Error('No response body');
       const reader = res.body.getReader();
       const decoder = new TextDecoder();

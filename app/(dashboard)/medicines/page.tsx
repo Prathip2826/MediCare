@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { auth } from "@/lib/firebase";
 
 interface Medicine {
   id: string;
@@ -56,10 +57,11 @@ export default function MedicinesPage() {
   const fetchMedicines = async () => {
     try {
       setLoading(true);
+      const uid = auth?.currentUser?.uid || '';
       // Fetch medicines and today's logs in parallel
       const [medsRes, logsRes] = await Promise.all([
-        fetch('/api/medicines'),
-        fetch('/api/medicines/log?today=true')
+        fetch('/api/medicines', { headers: { 'x-user-id': uid } }),
+        fetch('/api/medicines/log?today=true', { headers: { 'x-user-id': uid } })
       ]);
 
       const meds = await medsRes.json();
@@ -84,9 +86,10 @@ export default function MedicinesPage() {
     if (!newName || !newDosage) return;
     
     try {
+      const uid = auth?.currentUser?.uid || '';
       const res = await fetch('/api/medicines', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
         body: JSON.stringify({
           name: newName,
           dosage: newDosage,
@@ -104,6 +107,8 @@ export default function MedicinesPage() {
         setNewFrequency("morning");
         setNewNotes("");
         toast.success("Medicine added successfully");
+      } else {
+        toast.error("Failed to save medicine");
       }
     } catch (error) {
       toast.error("Failed to save medicine");
@@ -112,9 +117,10 @@ export default function MedicinesPage() {
 
   const handleMarkTaken = async (id: string) => {
     try {
+      const uid = auth?.currentUser?.uid || '';
       const res = await fetch('/api/medicines/log', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
         body: JSON.stringify({ medicine_id: id, status: 'taken' }),
       });
 
@@ -306,7 +312,8 @@ export default function MedicinesPage() {
                          </div>
                          <Button variant="ghost" size="icon" onClick={async () => {
                             if(confirm("Are you sure?")) {
-                              await fetch(`/api/medicines?id=${med.id}`, { method: 'DELETE' });
+                              const uid = auth?.currentUser?.uid || '';
+                              await fetch(`/api/medicines?id=${med.id}`, { method: 'DELETE', headers: { 'x-user-id': uid } });
                               fetchMedicines();
                             }
                          }}>

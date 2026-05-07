@@ -4,8 +4,8 @@ import { supabaseAdmin, getServerUser } from "@/lib/supabase-server";
 
 export async function GET(req: Request) {
   try {
-    const user = await getServerUser();
-    if (!user) {
+    const userId = req.headers.get("x-user-id");
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -15,7 +15,7 @@ export async function GET(req: Request) {
     let query = supabaseAdmin
       .from('health_metrics')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .order('recorded_at', { ascending: false });
 
     if (type) {
@@ -35,8 +35,8 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const user = await getServerUser();
-    if (!user) {
+    const userId = req.headers.get("x-user-id");
+    if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
       .from('health_metrics')
       .insert([
         { 
-          user_id: user.id, 
+          user_id: userId, 
           metric_type, 
           value, 
           unit,

@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { 
-  Calendar as CalendarIcon, Clock, MapPin, User, Plus, 
-  Brain, FileDown, Bell, CheckCircle2, XCircle, Loader2, Video
+  Calendar as CalendarIcon, Clock, MapPin, Plus, 
+  Brain, FileDown, CheckCircle2, XCircle, Loader2, Video
 } from "lucide-react";
 import { format } from "date-fns";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { auth } from "@/lib/firebase";
 
 interface Appointment {
   id: string;
@@ -42,17 +43,23 @@ export default function AppointmentsPage() {
   const [notes, setNotes] = useState("");
 
   useEffect(() => {
-    fetchAppointments();
+    const unsub = auth?.onAuthStateChanged?.((user: any) => {
+      if (user) fetchAppointments();
+      else setLoading(false);
+    });
+    return () => unsub?.();
   }, []);
 
+  const getUid = () => auth?.currentUser?.uid || '';
+
   const fetchAppointments = async () => {
+    const uid = getUid();
+    if (!uid) return;
     try {
       setLoading(true);
-      const res = await fetch('/api/appointments');
+      const res = await fetch('/api/appointments', { headers: { 'x-user-id': uid } });
       const data = await res.json();
-      if (res.ok) {
-        setAppointments(data);
-      }
+      if (res.ok) setAppointments(data);
     } catch (error) {
       console.error("Failed to fetch appointments:", error);
     } finally {
@@ -62,30 +69,27 @@ export default function AppointmentsPage() {
 
   const handleSaveAppointment = async () => {
     if (!doctorName || !date || !time) return;
-    
+    const uid = getUid();
+    if (!uid) { toast.error('Not authenticated'); return; }
     try {
       const dateTime = new Date(`${date}T${time}`).toISOString();
       const res = await fetch('/api/appointments', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          doctor_name: doctorName,
-          specialization,
-          hospital,
-          appointment_date: dateTime,
-          notes,
-        }),
+        headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
+        body: JSON.stringify({ doctor_name: doctorName, specialization, hospital, appointment_date: dateTime, notes }),
       });
-      
       if (res.ok) {
         const savedAppt = await res.json();
         setAppointments([...appointments, savedAppt]);
         setIsAddOpen(false);
         resetForm();
-        toast.success("Appointment booked successfully");
+        toast.success('Appointment booked successfully');
+      } else {
+        const err = await res.json();
+        toast.error(err.error || 'Failed to book appointment');
       }
     } catch (error) {
-      toast.error("Failed to book appointment");
+      toast.error('Failed to book appointment');
     }
   };
 
@@ -99,19 +103,20 @@ export default function AppointmentsPage() {
   };
 
   const handleStatusChange = async (id: string, status: string) => {
+    const uid = getUid();
+    if (!uid) return;
     try {
       const res = await fetch('/api/appointments', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
         body: JSON.stringify({ id, status }),
       });
-      
       if (res.ok) {
         setAppointments(appointments.map(a => a.id === id ? { ...a, status } : a));
         toast.success(`Appointment marked as ${status}`);
       }
     } catch (error) {
-      toast.error("Failed to update status");
+      toast.error('Failed to update status');
     }
   };
 

@@ -6,7 +6,6 @@ import {
   Heart, Activity, Brain, Droplets, Apple, Target, TrendingUp,
   Zap, Calendar, ChevronRight, CheckCircle
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { auth } from '@/lib/firebase';
 import Link from 'next/link';
 
@@ -63,15 +62,26 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const load = async () => {
-      if (supabase && auth?.currentUser) {
-        const uid = auth.currentUser.uid;
-        const today = new Date().toISOString().split('T')[0];
-        const { data } = await supabase.from('medicines').select('name,dosage').eq('user_id', uid).limit(3);
-        if (data) setMedicines(data);
+      const uid = auth?.currentUser?.uid;
+      if (uid) {
+        try {
+          const res = await fetch('/api/medicines', { headers: { 'x-user-id': uid } });
+          if (res.ok) {
+            const data = await res.json();
+            setMedicines((data || []).slice(0, 3));
+          }
+        } catch (e) {
+          console.error('Failed to load medicines:', e);
+        }
       }
       setLoading(false);
     };
-    load();
+    // Wait briefly for Firebase auth to initialize
+    const unsubscribe = auth?.onAuthStateChanged?.((user: any) => {
+      if (user) load();
+      else setLoading(false);
+    });
+    return () => unsubscribe?.();
   }, []);
 
   const toggleWater = (n: number) => setWaterGlasses(n);
